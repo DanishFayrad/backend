@@ -43,6 +43,7 @@ const startServer = async () => {
     }
     catch (error) {
         console.error('Unable to start the server:', error);
+        process.exit(1); // Ensure the process exits with error code so Heroku triggers a crash state
     }
 };
 startServer();

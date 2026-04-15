@@ -10,6 +10,12 @@ const sequelize = new Sequelize(databaseUrl, {
     dialect: 'postgres',
     dialectModule: pg,
     logging: false,
+    dialectOptions: {
+        ssl: process.env.NODE_ENV === 'production' ? {
+            require: true,
+            rejectUnauthorized: false
+        } : false
+    },
     pool: {
         max: 5,
         min: 0,
