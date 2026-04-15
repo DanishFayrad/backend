@@ -14,7 +14,8 @@ const sequelize = new Sequelize(databaseUrl, {
         ssl: process.env.NODE_ENV === 'production' ? {
             require: true,
             rejectUnauthorized: false
-        } : false
+        } : false,
+        family: 4
     },
     pool: {
         max: 5,
