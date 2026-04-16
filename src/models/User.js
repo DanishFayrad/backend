@@ -22,9 +22,21 @@ const User = sequelize.define('User', {
         type: DataTypes.STRING,
         allowNull: false
     },
+    phone: {
+        type: DataTypes.STRING,
+        allowNull: true
+    },
+    country: {
+        type: DataTypes.STRING,
+        allowNull: true
+    },
     wallet_balance: {
         type: DataTypes.FLOAT,
         defaultValue: 0.0
+    },
+    is_active: {
+        type: DataTypes.BOOLEAN,
+        defaultValue: false
     },
     free_signal_available: {
         type: DataTypes.BOOLEAN,

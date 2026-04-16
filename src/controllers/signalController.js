@@ -1,5 +1,6 @@
-import { Signal, UserSignal, User, sequelize } from '../models/index.js';
+import { Signal, UserSignal, User, Notification, sequelize } from '../models/index.js';
 import { Op } from 'sequelize';
+import { sendEmail } from '../services/emailService.js';
 export const getSignalsDashboard = async (req, res) => {
     try {
         const { symbol, limit = 20 } = req.query;
@@ -110,10 +111,51 @@ export const createSignal = async (req, res) => {
             status: 'active',
             result: 'pending'
         });
-        // TODO: Trigger push notifications to all users here
-        // For now, we return success.
+        // BROADCASTING
+        const users = await User.findAll({ attributes: ['id', 'email', 'name', 'is_active'] });
+
+        // Loop through users to notify them
+        for (const user of users) {
+             // 1. Create DB Notification
+             await Notification.create({
+                 user_id: user.id,
+                 title: `New Signal: ${symbol} (${type.toUpperCase()})`,
+                 message: `A new ${signal_type} signal for ${symbol} is available. Entry: ${entry_price}, TP: ${target_price}, SL: ${stop_loss}.`,
+                 type: 'signal',
+                 link: '/dashboard'
+             });
+
+             // 2. Emit Socket IO
+             if (req.io) {
+                 req.io.to(user.id).emit('notification', {
+                     title: `New Signal: ${symbol}`,
+                     message: `Take action on ${symbol} ${type.toUpperCase()}`,
+                     type: 'signal'
+                 });
+             }
+
+             // 3. Send Email (Optional check for active status or preference)
+             if (user.is_active) {
+                const emailHtml = `
+                    <h2>New Premium Signal</h2>
+                    <p>Hello ${user.name},</p>
+                    <p>A new trading signal has been broadcasted:</p>
+                    <ul>
+                        <li><b>Asset:</b> ${symbol}</li>
+                        <li><b>Action:</b> ${type.toUpperCase()}</li>
+                        <li><b>Entry Price:</b> ${entry_price}</li>
+                        <li><b>Target:</b> ${target_price}</li>
+                        <li><b>Stop Loss:</b> ${stop_loss}</li>
+                    </ul>
+                    <p>Login to your dashboard to take the trade.</p>
+                `;
+                sendEmail(user.email, `New Signal Alert: ${symbol}`, `New Signal for ${symbol} is active.`, emailHtml)
+                    .catch(err => console.error(`Failed to send email to ${user.email}`, err));
+             }
+        }
+
         return res.status(201).json({
-            message: 'Signal created and broadcasted successfully',
+            message: 'Signal created and broadcasted successfully via Email and Live Notification',
             signal
         });
     }

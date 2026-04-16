@@ -15,10 +15,22 @@ const Transaction = sequelize.define('Transaction', {
         allowNull: false
     },
     type: {
-        type: DataTypes.STRING,
+        type: DataTypes.STRING, // 'deposit' or 'withdrawal'
         allowNull: false
     },
+    payment_method: {
+        type: DataTypes.STRING,
+        allowNull: true
+    },
+    status: {
+        type: DataTypes.STRING,
+        defaultValue: 'pending' // 'pending', 'approved', 'rejected'
+    },
     description: {
+        type: DataTypes.STRING,
+        allowNull: true
+    },
+    proof_image: {
         type: DataTypes.STRING,
         allowNull: true
     }
@@ -26,7 +38,7 @@ const Transaction = sequelize.define('Transaction', {
     tableName: 'transactions',
     timestamps: true,
     createdAt: 'created_at',
-    updatedAt: false
+    updatedAt: 'updated_at'
 });
 export default Transaction;
 //# sourceMappingURL=Transaction.js.map

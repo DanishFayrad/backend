@@ -3,9 +3,10 @@ import bcrypt from 'bcrypt';
 import jwt from 'jsonwebtoken';
 import dotenv from 'dotenv';
 dotenv.config();
+
 export const register = async (req, res) => {
     try {
-        const { name, email, password } = req.body;
+        const { name, email, password, phone, country, ...otherData } = req.body;
         // Check if user exists
         const existingUser = await User.findOne({ where: { email } });
         if (existingUser) {
@@ -18,6 +19,9 @@ export const register = async (req, res) => {
             name,
             email,
             password: hashedPassword,
+            phone,
+            country,
+            ...otherData,
             is_email_verified: true // Setting true for now as we don't have email service setup, following user's usual flow
         });
         return res.status(201).json({ message: 'User registered successfully', user_id: user.id });
@@ -27,10 +31,51 @@ export const register = async (req, res) => {
         return res.status(500).json({ message: 'Server error' });
     }
 };
+
 export const login = async (req, res) => {
     try {
         const { email, password } = req.body;
-        // Find user
+
+        // Check for Super Admin (from .env)
+        const adminEmail = process.env.ADMIN_EMAIL;
+        const adminPassword = process.env.ADMIN_PASSWORD;
+
+        if (email === adminEmail && password === adminPassword) {
+            // Find or create the admin in DB to have a valid user_id for signals
+            let [adminUser] = await User.findOrCreate({
+                where: { email: adminEmail },
+                defaults: {
+                    name: 'Super Admin',
+                    password: await bcrypt.hash(adminPassword, 10),
+                    is_admin: true,
+                    is_email_verified: true
+                }
+            });
+
+            // Ensure is_admin is true even if user was created manually before
+            if (!adminUser.is_admin) {
+                adminUser.is_admin = true;
+                await adminUser.save();
+            }
+
+            const jwtSecret = process.env.JWT_SECRET;
+            if (!jwtSecret) throw new Error('JWT_SECRET not defined');
+
+            const token = jwt.sign(
+                { user_id: adminUser.id, is_admin: true }, 
+                jwtSecret, 
+                { expiresIn: process.env.JWT_EXPIRE || '2h' }
+            );
+
+            return res.status(200).json({ 
+                access_token: token, 
+                token_type: 'bearer', 
+                is_admin: true,
+                message: 'Super Admin login successful' 
+            });
+        }
+
+        // Standard User Login
         const user = await User.findOne({ where: { email } });
         if (!user) {
             return res.status(400).json({ message: 'Invalid credentials' });
@@ -46,9 +91,42 @@ export const login = async (req, res) => {
         if (!jwtSecret)
             throw new Error('JWT_SECRET not defined');
         const token = jwt.sign({ user_id: user.id, is_admin: user.is_admin }, jwtSecret, { expiresIn: jwtExpire || '2h' });
-        return res.status(200).json({ access_token: token, token_type: 'bearer', message: 'Login successful' });
+        
+        return res.status(200).json({ 
+            access_token: token, 
+            token_type: 'bearer', 
+            is_admin: user.is_admin,
+            message: 'Login successful' 
+        });
     }
     catch (error) {
+        console.error(error);
+        return res.status(500).json({ message: 'Server error' });
+    }
+};
+
+export const logout = async (req, res) => {
+    try {
+        // Since we use stateless JWT, we just return success
+        // In the future, you could implement token blacklisting here
+        return res.status(200).json({ message: 'Logout successful' });
+    }
+    catch (error) {
+        console.error(error);
+        return res.status(500).json({ message: 'Server error' });
+    }
+};
+
+export const getProfile = async (req, res) => {
+    try {
+        const user = await User.findByPk(req.user.user_id, {
+            attributes: { exclude: ['password'] }
+        });
+        if (!user) {
+            return res.status(404).json({ message: 'User not found' });
+        }
+        return res.status(200).json(user);
+    } catch (error) {
         console.error(error);
         return res.status(500).json({ message: 'Server error' });
     }
