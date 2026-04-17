@@ -10,7 +10,10 @@ router.get('/my', requireAuth, transactionController.getMyTransactions);
 
 // Admin routes
 router.get('/pending', [requireAuth, requireAdmin], transactionController.getPendingTransactions);
+router.get('/all', [requireAuth, requireAdmin], transactionController.getAllTransactions);
 router.post('/:id/approve', [requireAuth, requireAdmin], transactionController.approveTransaction);
 router.post('/:id/reject', [requireAuth, requireAdmin], transactionController.rejectTransaction);
+router.get('/admin-stats', [requireAuth, requireAdmin], transactionController.getAdminStats);
+router.get('/wallet-stats', requireAuth, transactionController.getUserWalletStats);
 
 export default router;

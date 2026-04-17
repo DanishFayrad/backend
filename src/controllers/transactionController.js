@@ -1,66 +1,59 @@
 import { Transaction, User, Notification, sequelize } from '../models/index.js';
-import { supabase } from '../config/supabaseClient.js';
 import path from 'path';
+import fs from 'fs';
+import cloudinary from '../config/cloudinary.js';
 
 export const requestDeposit = async (req, res) => {
     try {
-        const { amount, payment_method } = req.body;
+        let { amount, payment_method } = req.body;
         const user_id = req.user.user_id;
 
-        if (!amount || amount <= 0) {
-            return res.status(400).json({ message: 'Invalid amount' });
-        }
+        amount = parseFloat(amount) || 0;
 
         if (!req.file) {
             return res.status(400).json({ message: 'Proof of payment screenshot is required.' });
         }
 
-        if (!supabase) {
-            return res.status(500).json({ message: 'Server Configuration Error: SUPABASE_KEY is missing in .env file.' });
-        }
+        // Convert buffer to Base64 for Cloudinary upload
+        const base64Image = req.file.buffer.toString('base64');
+        const dataUri = `data:${req.file.mimetype};base64,${base64Image}`;
 
-        // Upload to Supabase Storage
-        const fileExt = path.extname(req.file.originalname);
-        const fileName = `${user_id}-${Date.now()}${fileExt}`;
-        const filePath = `proofs/${fileName}`;
-
-        const { data: uploadData, error: uploadError } = await supabase.storage
-            .from('proofs')
-            .upload(filePath, req.file.buffer, {
-                contentType: req.file.mimetype,
-                upsert: true
-            });
-
-        if (uploadError) {
-            console.error('Supabase upload error:', uploadError);
-            return res.status(500).json({ 
-                message: `Supabase Upload Failed: ${uploadError.message}. Make sure you have created a bucket named 'proofs' in Supabase Storage and set it to Public.` 
-            });
-        }
-
-        // Get Public URL
-        const { data: { publicUrl } } = supabase.storage
-            .from('proofs')
-            .getPublicUrl(filePath);
+        const cloudinaryResult = await cloudinary.uploader.upload(dataUri, {
+            folder: 'asianfx_proofs',
+        });
+        
+        console.log('Cloudinary Upload Result:', cloudinaryResult);
+        const publicUrl = cloudinaryResult.secure_url;
 
         const transaction = await Transaction.create({
             user_id,
             amount,
             type: 'deposit',
             payment_method,
-            proof_image: publicUrl, // Store the Supabase public URL
+            proof_image: publicUrl,
             status: 'pending',
             description: `Deposit request via ${payment_method}`
         });
 
-        // In a real app, you might emit a socket event here for real-time admin notification
+        // Notify Admin via Socket.io
+        if (req.io) {
+            req.io.to('admin').emit('admin_notification', {
+                type: 'NEW_DEPOSIT',
+                message: `New deposit request of $${amount} from User ID: ${user_id}`,
+                transaction
+            });
+        }
+
         return res.status(201).json({ 
             message: 'Deposit request submitted successfully. Waiting for admin approval.',
             transaction 
         });
     } catch (error) {
-        console.error(error);
-        return res.status(500).json({ message: 'Server error' });
+        console.error('DEPOSIT_ERROR:', error);
+        return res.status(500).json({ 
+            message: 'Server error during deposit submission',
+            details: error.message 
+        });
     }
 };
 
@@ -102,6 +95,7 @@ export const approveTransaction = async (req, res) => {
     const t = await sequelize.transaction();
     try {
         const { id } = req.params;
+        const { amount } = req.body;
         const transaction = await Transaction.findByPk(id, { transaction: t });
 
         if (!transaction) {
@@ -122,6 +116,9 @@ export const approveTransaction = async (req, res) => {
 
         // Update status
         transaction.status = 'approved';
+        if (amount !== undefined && !isNaN(parseFloat(amount))) {
+            transaction.amount = parseFloat(amount);
+        }
         await transaction.save({ transaction: t });
 
         // Update wallet balance if it's a deposit
@@ -177,6 +174,79 @@ export const rejectTransaction = async (req, res) => {
         await transaction.save();
 
         return res.status(200).json({ message: 'Transaction rejected' });
+    } catch (error) {
+        console.error(error);
+        return res.status(500).json({ message: 'Server error' });
+    }
+};
+
+export const getAllTransactions = async (req, res) => {
+    try {
+        const transactions = await Transaction.findAll({
+            include: [{
+                model: User,
+                attributes: ['id', 'name', 'email', 'phone']
+            }],
+            order: [['created_at', 'DESC']]
+        });
+        return res.status(200).json(transactions);
+    } catch (error) {
+        console.error(error);
+        return res.status(500).json({ message: 'Server error' });
+    }
+};
+
+export const getAdminStats = async (req, res) => {
+    try {
+        const totalUsers = await User.count();
+        const totalBalance = await User.sum('wallet_balance') || 0;
+        
+        const deposits = await Transaction.findAll({ where: { status: 'approved', type: 'deposit' } });
+        const withdrawals = await Transaction.findAll({ where: { status: 'approved', type: 'withdrawal' } });
+
+        const totalDeposit = deposits.reduce((sum, t) => sum + t.amount, 0);
+        const totalWithdrawal = withdrawals.reduce((sum, t) => sum + t.amount, 0);
+        const totalProfit = totalDeposit - totalWithdrawal; // Basic calculation
+
+        const pendingDeposits = await Transaction.count({ where: { status: 'pending', type: 'deposit' } });
+        const approvedDeposits = deposits.length;
+
+        return res.status(200).json({
+            total_users: totalUsers,
+            platform_balance: totalBalance.toLocaleString(),
+            total_deposit: totalDeposit.toLocaleString(),
+            total_withdrawal: totalWithdrawal.toLocaleString(),
+            total_profit: totalProfit.toLocaleString(),
+            pending_deposits: pendingDeposits,
+            approved_deposits: approvedDeposits,
+            deposit_count: approvedDeposits,
+            withdrawal_count: withdrawals.length
+        });
+    } catch (error) {
+        console.error(error);
+        return res.status(500).json({ message: 'Server error' });
+    }
+};
+
+export const getUserWalletStats = async (req, res) => {
+    try {
+        const user_id = req.user.user_id;
+        const user = await User.findByPk(user_id);
+        
+        const deposits = await Transaction.findAll({ where: { user_id, status: 'approved', type: 'deposit' } });
+        const withdrawals = await Transaction.findAll({ where: { user_id, status: 'approved', type: 'withdrawal' } });
+
+        const totalDeposit = deposits.reduce((sum, t) => sum + t.amount, 0);
+        const totalWithdrawal = withdrawals.reduce((sum, t) => sum + t.amount, 0);
+
+        return res.status(200).json({
+            balance: user.wallet_balance,
+            total_deposit: totalDeposit,
+            total_withdrawal: totalWithdrawal,
+            deposit_count: deposits.length,
+            withdrawal_count: withdrawals.length,
+            total_profit: (user.wallet_balance + totalWithdrawal) - totalDeposit
+        });
     } catch (error) {
         console.error(error);
         return res.status(500).json({ message: 'Server error' });

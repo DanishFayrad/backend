@@ -97,7 +97,8 @@ export const getUserSignalHistory = async (req, res) => {
 };
 export const createSignal = async (req, res) => {
     try {
-        const { symbol, type, entry_price, target_price, stop_loss, signal_type = 'free', description, expires_at } = req.body;
+        const { symbol, type, entry_price, target_price, stop_loss, signal_type = 'free', description, expires_at, target_user_id } = req.body;
+        
         const signal = await Signal.create({
             symbol,
             type,
@@ -109,13 +110,21 @@ export const createSignal = async (req, res) => {
             expires_at,
             created_by: req.user.user_id,
             status: 'active',
-            result: 'pending'
+            result: 'pending',
+            target_user_id: target_user_id || null // Add this to your model if not already there
         });
-        // BROADCASTING
-        const users = await User.findAll({ attributes: ['id', 'email', 'name', 'is_active'] });
+
+        // Determine users to notify
+        let usersToNotify = [];
+        if (target_user_id) {
+            const user = await User.findByPk(target_user_id);
+            if (user) usersToNotify = [user];
+        } else {
+            usersToNotify = await User.findAll({ attributes: ['id', 'email', 'name', 'is_active'] });
+        }
 
         // Loop through users to notify them
-        for (const user of users) {
+        for (const user of usersToNotify) {
              // 1. Create DB Notification
              await Notification.create({
                  user_id: user.id,
@@ -130,14 +139,15 @@ export const createSignal = async (req, res) => {
                  req.io.to(user.id).emit('notification', {
                      title: `New Signal: ${symbol}`,
                      message: `Take action on ${symbol} ${type.toUpperCase()}`,
-                     type: 'signal'
+                     type: 'signal',
+                     signal: signal
                  });
              }
 
-             // 3. Send Email (Optional check for active status or preference)
+             // 3. Send Email
              if (user.is_active) {
                 const emailHtml = `
-                    <h2>New Premium Signal</h2>
+                    <h2>New ${target_user_id ? 'Personalized ' : ''}Signal</h2>
                     <p>Hello ${user.name},</p>
                     <p>A new trading signal has been broadcasted:</p>
                     <ul>
@@ -155,7 +165,7 @@ export const createSignal = async (req, res) => {
         }
 
         return res.status(201).json({
-            message: 'Signal created and broadcasted successfully via Email and Live Notification',
+            message: target_user_id ? 'Signal sent to specific user successfully' : 'Signal created and broadcasted successfully',
             signal
         });
     }

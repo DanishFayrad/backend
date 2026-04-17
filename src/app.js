@@ -1,6 +1,7 @@
 import express from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
+dotenv.config();
 import { sequelize } from './models/index.js';
 import http from 'http';
 import { Server } from 'socket.io';
@@ -30,13 +31,15 @@ io.on('connection', (socket) => {
         console.log(`User ${user_id} joined their private room.`);
     });
 
+    socket.on('join_admin', () => {
+        socket.join('admin');
+        console.log(`An Admin joined the admin room.`);
+    });
+
     socket.on('disconnect', () => {
         console.log('User disconnected');
     });
 });
-
-// Load env vars
-dotenv.config();
 
 // Middleware
 app.use(cors());

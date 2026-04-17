@@ -2,19 +2,19 @@ import pg from 'pg';
 import { Sequelize } from 'sequelize';
 import dotenv from 'dotenv';
 dotenv.config();
-const databaseUrl = process.env.DATABASE_URL;
+const databaseUrl = process.env.DATABASE_URL || process.env.HEROKU_POSTGRESQL_PINK_URL;
 if (!databaseUrl) {
-    throw new Error('DATABASE_URL is not defined in .env');
+    throw new Error('Database URL (DATABASE_URL or HEROKU_POSTGRESQL_PINK_URL) is not defined in environment variables');
 }
 const sequelize = new Sequelize(databaseUrl, {
     dialect: 'postgres',
     dialectModule: pg,
     logging: false,
     dialectOptions: {
-        ssl: process.env.NODE_ENV === 'production' ? {
+        ssl: {
             require: true,
             rejectUnauthorized: false
-        } : false,
+        },
         family: 4
     },
     pool: {

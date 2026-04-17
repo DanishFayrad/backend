@@ -12,8 +12,8 @@
     "license": "ISC",
     "type": "module",
     "dependencies": {
-        "@supabase/supabase-js": "^2.103.3",
         "bcrypt": "^6.0.0",
+        "cloudinary": "^2.9.0",
         "cors": "^2.8.6",
         "dotenv": "^17.4.1",
         "express": "^5.2.1",
@@ -25,7 +25,8 @@
         "postgres": "^3.4.9",
         "prisma": "^7.7.0",
         "sequelize": "^6.37.8",
-        "socket.io": "^4.8.3"
+        "socket.io": "^4.8.3",
+        "streamifier": "^0.1.1"
     },
     "devDependencies": {
         "nodemon": "^3.1.14"

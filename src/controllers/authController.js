@@ -71,6 +71,13 @@ export const login = async (req, res) => {
                 access_token: token, 
                 token_type: 'bearer', 
                 is_admin: true,
+                user: {
+                    id: adminUser.id,
+                    name: adminUser.name,
+                    email: adminUser.email,
+                    is_admin: true,
+                    is_active: true
+                },
                 message: 'Super Admin login successful' 
             });
         }
@@ -95,7 +102,14 @@ export const login = async (req, res) => {
         return res.status(200).json({ 
             access_token: token, 
             token_type: 'bearer', 
-            is_admin: user.is_admin,
+            user: {
+                id: user.id,
+                name: user.name,
+                email: user.email,
+                is_admin: user.is_admin,
+                is_active: user.is_active,
+                wallet_balance: user.wallet_balance
+            },
             message: 'Login successful' 
         });
     }

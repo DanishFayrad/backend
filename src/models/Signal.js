@@ -65,6 +65,14 @@ const Signal = sequelize.define('Signal', {
     image_url: {
         type: DataTypes.STRING(500),
         allowNull: true
+    },
+    target_user_id: {
+        type: DataTypes.INTEGER,
+        allowNull: true,
+        references: {
+            model: 'users',
+            key: 'id'
+        }
     }
 }, {
     tableName: 'signals',

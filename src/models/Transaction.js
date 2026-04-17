@@ -31,7 +31,7 @@ const Transaction = sequelize.define('Transaction', {
         allowNull: true
     },
     proof_image: {
-        type: DataTypes.STRING,
+        type: DataTypes.TEXT,
         allowNull: true
     }
 }, {
