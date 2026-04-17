@@ -68,6 +68,8 @@ app.get('/', (req, res) => {
     });
 });
 const PORT = process.env.PRODUCTION_URL || 5000;
+
+console.log('ajosdjasdj 9999 ',PORT)
 const startServer = async () => {
     try {
         // Sync database
