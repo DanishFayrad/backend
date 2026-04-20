@@ -281,3 +281,20 @@ export const getUserWalletStats = async (req, res) => {
         return res.status(500).json({ message: 'Server error' });
     }
 };
+
+export const deleteTransaction = async (req, res) => {
+    try {
+        const { id } = req.params;
+        const transaction = await Transaction.findByPk(id);
+
+        if (!transaction) {
+            return res.status(404).json({ message: 'Transaction not found' });
+        }
+
+        await transaction.destroy();
+        return res.status(200).json({ message: 'Transaction deleted successfully' });
+    } catch (error) {
+        console.error(error);
+        return res.status(500).json({ message: 'Server error' });
+    }
+};
