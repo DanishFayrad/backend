@@ -73,6 +73,10 @@ const Signal = sequelize.define('Signal', {
             model: 'users',
             key: 'id'
         }
+    },
+    release_at: {
+        type: DataTypes.DATE,
+        allowNull: true
     }
 }, {
     tableName: 'signals',

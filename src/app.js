@@ -25,6 +25,14 @@ app.use((req, res, next) => {
 io.on('connection', (socket) => {
     console.log('A user connected:', socket.id);
     
+    // Emit active client count to admins
+    const emitActiveCount = () => {
+        const count = io.sockets.sockets.size;
+        io.to('admin').emit('active_clients_count', count);
+    };
+
+    emitActiveCount();
+    
     // Join a room based on user_id for private notifications
     socket.on('join', (user_id) => {
         socket.join(user_id);
@@ -34,10 +42,12 @@ io.on('connection', (socket) => {
     socket.on('join_admin', () => {
         socket.join('admin');
         console.log(`An Admin joined the admin room.`);
+        emitActiveCount(); // Send current count immediately
     });
 
     socket.on('disconnect', () => {
         console.log('User disconnected');
+        emitActiveCount();
     });
 });
 
@@ -67,9 +77,7 @@ app.get('/', (req, res) => {
         version: "2.0.0"
     });
 });
-const PORT = process.env.PRODUCTION_URL || 5000;
-
-console.log('ajosdjasdj 9999 ',PORT)
+const PORT = process.env.PORT || 5000;
 const startServer = async () => {
     try {
         // Sync database

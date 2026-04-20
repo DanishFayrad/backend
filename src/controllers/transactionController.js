@@ -208,13 +208,42 @@ export const getAdminStats = async (req, res) => {
         const totalWithdrawal = withdrawals.reduce((sum, t) => sum + t.amount, 0);
         const totalProfit = totalDeposit - totalWithdrawal; // Basic calculation
 
-        const pendingDeposits = await Transaction.count({ where: { status: 'pending', type: 'deposit' } });
-        const approvedDeposits = deposits.length;
+        const today = new Date();
+        today.setHours(0,0,0,0);
+        const firstDayOfMonth = new Date(today.getFullYear(), today.getMonth(), 1);
+
+        const todayDeposits = await Transaction.findAll({ 
+            where: { 
+                status: 'approved', 
+                type: 'deposit',
+                created_at: { [Op.gte]: today }
+            } 
+        });
+
+        const monthlyDeposits = await Transaction.findAll({ 
+            where: { 
+                status: 'approved', 
+                type: 'deposit',
+                created_at: { [Op.gte]: firstDayOfMonth }
+            } 
+        });
+
+        const dailyRegistrationCount = await User.count({
+            where: {
+                created_at: { [Op.gte]: today }
+            }
+        });
+
+        const dailyDepositSum = todayDeposits.reduce((sum, t) => sum + t.amount, 0);
+        const monthlyDepositSum = monthlyDeposits.reduce((sum, t) => sum + t.amount, 0);
 
         return res.status(200).json({
             total_users: totalUsers,
+            today_registrations: dailyRegistrationCount,
             platform_balance: totalBalance.toLocaleString(),
             total_deposit: totalDeposit.toLocaleString(),
+            today_deposit: dailyDepositSum.toLocaleString(),
+            monthly_deposit: monthlyDepositSum.toLocaleString(),
             total_withdrawal: totalWithdrawal.toLocaleString(),
             total_profit: totalProfit.toLocaleString(),
             pending_deposits: pendingDeposits,

@@ -4,7 +4,20 @@ import { sendEmail } from '../services/emailService.js';
 export const getSignalsDashboard = async (req, res) => {
     try {
         const { symbol, limit = 20 } = req.query;
-        const where = { status: 'active' };
+        const seventyTwoHoursAgo = new Date(Date.now() - 72 * 60 * 60 * 1000);
+        const where = { 
+            status: 'active',
+            created_at: { [Op.gte]: seventyTwoHoursAgo }
+        };
+
+        // Filter by user unless admin
+        if (!req.user.is_admin) {
+            where[Op.or] = [
+                { target_user_id: null },
+                { target_user_id: req.user.user_id }
+            ];
+        }
+
         if (symbol) {
             where.symbol = { [Op.iLike]: `%${symbol}%` };
         }
@@ -19,7 +32,7 @@ export const getSignalsDashboard = async (req, res) => {
         });
         // Stats
         const total_signals = await Signal.count();
-        const active_count = await Signal.count({ where: { status: 'active' } });
+        const active_count = await Signal.count({ where });
         const success_count = await Signal.count({ where: { result: 'win' } });
         const success_rate = total_signals > 0 ? (success_count / total_signals) * 100 : 0;
         return res.status(200).json({
@@ -66,7 +79,18 @@ export const takeSignal = async (req, res) => {
         // Update signal stats
         signal.total_taken += 1;
         await signal.save({ transaction: t });
+        
         await t.commit();
+        
+        // Notify admins for the "Who purchased" stat
+        if (req.io) {
+            req.io.to('admin').emit('admin_notification', {
+                type: 'SIGNAL_PURCHASED',
+                signal_id: signal.id,
+                total_taken: signal.total_taken
+            });
+        }
+        
         return res.status(201).json({ message: 'Signal taken successfully', data: userSignal });
     }
     catch (error) {
@@ -97,7 +121,16 @@ export const getUserSignalHistory = async (req, res) => {
 };
 export const createSignal = async (req, res) => {
     try {
-        const { symbol, type, entry_price, target_price, stop_loss, signal_type = 'free', description, expires_at, target_user_id } = req.body;
+        const { 
+            symbol, type, entry_price, target_price, stop_loss, 
+            signal_type = 'free', description, expires_at, target_user_id,
+            timer_minutes // New field from admin form
+        } = req.body;
+        
+        let release_at = null;
+        if (timer_minutes && parseInt(timer_minutes) > 0) {
+            release_at = new Date(Date.now() + parseInt(timer_minutes) * 60 * 1000);
+        }
         
         const signal = await Signal.create({
             symbol,
@@ -108,6 +141,7 @@ export const createSignal = async (req, res) => {
             signal_type,
             description,
             expires_at,
+            release_at, // New field
             created_by: req.user.user_id,
             status: 'active',
             result: 'pending',
@@ -170,6 +204,44 @@ export const createSignal = async (req, res) => {
         });
     }
     catch (error) {
+        console.error(error);
+        return res.status(500).json({ message: 'Server error' });
+    }
+};
+
+export const extendTimer = async (req, res) => {
+    try {
+        const { id } = req.params;
+        const { additional_minutes } = req.body;
+        
+        const signal = await Signal.findByPk(id);
+        if (!signal) {
+            return res.status(404).json({ message: 'Signal not found' });
+        }
+        
+        if (!signal.release_at) {
+            return res.status(400).json({ message: 'This signal does not have a timer' });
+        }
+        
+        const current_release = new Date(signal.release_at);
+        const new_release = new Date(current_release.getTime() + parseInt(additional_minutes) * 60 * 1000);
+        
+        signal.release_at = new_release;
+        await signal.save();
+        
+        // Notify users about the change
+        if (req.io) {
+            req.io.emit('signal_timer_updated', {
+                signal_id: id,
+                new_release_at: new_release
+            });
+        }
+        
+        return res.status(200).json({ 
+            message: `Timer extended by ${additional_minutes} minutes`,
+            new_release_at: new_release
+        });
+    } catch (error) {
         console.error(error);
         return res.status(500).json({ message: 'Server error' });
     }
