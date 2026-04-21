@@ -1,6 +1,7 @@
 import { Signal, UserSignal, User, Notification, sequelize } from '../models/index.js';
 import { Op } from 'sequelize';
 import { sendEmail } from '../services/emailService.js';
+import cloudinary from '../config/cloudinary.js';
 export const getSignalsDashboard = async (req, res) => {
     try {
         const { symbol, limit = 20 } = req.query;
@@ -12,9 +13,14 @@ export const getSignalsDashboard = async (req, res) => {
 
         // Filter by user unless admin
         if (!req.user.is_admin) {
-            where[Op.or] = [
-                { target_user_id: null },
-                { target_user_id: req.user.user_id }
+            const currentUserId = parseInt(req.user.user_id);
+            where[Op.and] = [
+                {
+                    [Op.or]: [
+                        { target_user_id: null },
+                        { target_user_id: currentUserId }
+                    ]
+                }
             ];
         }
 
@@ -31,17 +37,38 @@ export const getSignalsDashboard = async (req, res) => {
             order: [['created_at', 'DESC']]
         });
         // Stats
-        const total_signals = await Signal.count();
-        const active_count = await Signal.count({ where });
-        const success_count = await Signal.count({ where: { result: 'win' } });
-        const success_rate = total_signals > 0 ? (success_count / total_signals) * 100 : 0;
+        const privacyFilter = !req.user.is_admin ? {
+            [Op.and]: [
+                {
+                    [Op.or]: [
+                        { target_user_id: null },
+                        { target_user_id: parseInt(req.user.user_id) }
+                    ]
+                }
+            ]
+        } : {};
+
+        const active_count = await Signal.count({ 
+            where: { 
+                ...where,
+                ...privacyFilter
+            } 
+        });
+
+        const total_count = await Signal.count({ 
+            where: { 
+                created_at: { [Op.gte]: seventyTwoHoursAgo },
+                ...privacyFilter
+            } 
+        });
+
         return res.status(200).json({
             active_signals,
             recent_signals,
             stats: {
-                total_signals,
+                total_signals: total_count,
                 active_signals: active_count,
-                success_rate: success_rate.toFixed(2)
+                success_rate: "0.00"
             }
         });
     }
@@ -124,35 +151,62 @@ export const createSignal = async (req, res) => {
         const { 
             symbol, type, entry_price, target_price, stop_loss, 
             signal_type = 'free', description, expires_at, target_user_id,
-            timer_minutes // New field from admin form
+            timer_minutes,
+            release_at: req_release_at
         } = req.body;
         
-        let release_at = null;
+        let release_at = req_release_at || null;
         if (timer_minutes && parseInt(timer_minutes) > 0) {
             release_at = new Date(Date.now() + parseInt(timer_minutes) * 60 * 1000);
         }
+
+        let image_url = null;
+        if (req.file) {
+            try {
+                console.log(`Uploading signal image to Cloudinary...`);
+                const base64Image = req.file.buffer.toString('base64');
+                const dataUri = `data:${req.file.mimetype};base64,${base64Image}`;
+                
+                const uploadResult = await cloudinary.uploader.upload(dataUri, {
+                    folder: 'asianfx_signals',
+                });
+                image_url = uploadResult.secure_url;
+                console.log('Signal image uploaded successfully:', image_url);
+            } catch (err) {
+                console.error('Signal image upload failed:', err);
+                // We'll continue without image if upload fails, or you could return error
+            }
+        }
+        
+        // Strict check: if this comes from a targeted action, ensure ID is valid
+        const final_target_user_id = target_user_id ? parseInt(target_user_id) : null;
         
         const signal = await Signal.create({
             symbol,
             type,
-            entry_price,
-            target_price,
-            stop_loss,
+            entry_price: parseFloat(entry_price),
+            target_price: parseFloat(target_price),
+            stop_loss: parseFloat(stop_loss),
             signal_type,
             description,
             expires_at,
-            release_at, // New field
+            release_at,
+            image_url,
             created_by: req.user.user_id,
             status: 'active',
             result: 'pending',
-            target_user_id: target_user_id || null // Add this to your model if not already there
+            target_user_id: final_target_user_id
         });
 
         // Determine users to notify
         let usersToNotify = [];
-        if (target_user_id) {
-            const user = await User.findByPk(target_user_id);
-            if (user) usersToNotify = [user];
+        if (final_target_user_id) {
+            const user = await User.findByPk(final_target_user_id);
+            if (user) {
+                usersToNotify = [user];
+            } else {
+                return res.status(404).json({ message: 'Target user not found' });
+            }
         } else {
             usersToNotify = await User.findAll({ attributes: ['id', 'email', 'name', 'is_active'] });
         }
@@ -209,6 +263,35 @@ export const createSignal = async (req, res) => {
     }
 };
 
+export const deleteSignal = async (req, res) => {
+    try {
+        const { id } = req.params;
+        const signal = await Signal.findByPk(id);
+        
+        if (!signal) {
+            return res.status(404).json({ message: 'Signal not found' });
+        }
+
+        const currentUserId = parseInt(req.user.user_id);
+        
+        // Authorization check: 
+        // 1. Admins can delete anything.
+        // 2. Normal users can ONLY delete signals specifically targeted to them.
+        const isTargetUser = signal.target_user_id && parseInt(signal.target_user_id) === currentUserId;
+
+        if (!req.user.is_admin && !isTargetUser) {
+            console.warn(`Unauthorized delete attempt by user ${currentUserId} on signal ${id}`);
+            return res.status(403).json({ message: 'You can only remove signals sent specifically to you.' });
+        }
+
+        await signal.destroy();
+        return res.status(200).json({ message: 'Signal deleted successfully' });
+    } catch (error) {
+        console.error("DELETE_SIGNAL_ERROR:", error);
+        return res.status(500).json({ message: 'Server error', details: error.message });
+    }
+};
+
 export const extendTimer = async (req, res) => {
     try {
         const { id } = req.params;
@@ -231,10 +314,18 @@ export const extendTimer = async (req, res) => {
         
         // Notify users about the change
         if (req.io) {
-            req.io.emit('signal_timer_updated', {
-                signal_id: id,
-                new_release_at: new_release
-            });
+            // Only broadcast to target user if it's a private signal
+            if (signal.target_user_id) {
+                req.io.to(signal.target_user_id).emit('signal_timer_updated', {
+                    signal_id: id,
+                    new_release_at: new_release
+                });
+            } else {
+                req.io.emit('signal_timer_updated', {
+                    signal_id: id,
+                    new_release_at: new_release
+                });
+            }
         }
         
         return res.status(200).json({ 

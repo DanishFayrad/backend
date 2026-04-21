@@ -50,11 +50,19 @@ const User = sequelize.define('User', {
         type: DataTypes.BOOLEAN,
         defaultValue: false
     },
-    email_verification_token: {
+    otp: {
         type: DataTypes.STRING,
         allowNull: true
     },
-    verification_token_expires: {
+    otp_expires: {
+        type: DataTypes.DATE,
+        allowNull: true
+    },
+    reset_password_otp: {
+        type: DataTypes.STRING,
+        allowNull: true
+    },
+    reset_password_expires: {
         type: DataTypes.DATE,
         allowNull: true
     }

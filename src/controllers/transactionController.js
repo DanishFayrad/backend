@@ -1,4 +1,5 @@
 import { Transaction, User, Notification, sequelize } from '../models/index.js';
+import { Op } from 'sequelize';
 import path from 'path';
 import fs from 'fs';
 import cloudinary from '../config/cloudinary.js';
@@ -11,19 +12,30 @@ export const requestDeposit = async (req, res) => {
         amount = parseFloat(amount) || 0;
 
         if (!req.file) {
+            console.error('DEPOSIT_ERROR: No file uploaded');
             return res.status(400).json({ message: 'Proof of payment screenshot is required.' });
         }
 
+        console.log(`Uploading proof for user ${user_id} to Cloudinary...`);
+        
         // Convert buffer to Base64 for Cloudinary upload
         const base64Image = req.file.buffer.toString('base64');
         const dataUri = `data:${req.file.mimetype};base64,${base64Image}`;
 
-        const cloudinaryResult = await cloudinary.uploader.upload(dataUri, {
-            folder: 'asianfx_proofs',
-        });
-        
-        console.log('Cloudinary Upload Result:', cloudinaryResult);
-        const publicUrl = cloudinaryResult.secure_url;
+        let publicUrl;
+        try {
+            const cloudinaryResult = await cloudinary.uploader.upload(dataUri, {
+                folder: 'asianfx_proofs',
+            });
+            console.log('Cloudinary Upload Success:', cloudinaryResult.secure_url);
+            publicUrl = cloudinaryResult.secure_url;
+        } catch (cloudinaryError) {
+            console.error('CLOUDINARY_UPLOAD_ERROR:', cloudinaryError);
+            return res.status(500).json({ 
+                message: 'Failed to upload image to Cloudinary',
+                details: cloudinaryError.message 
+            });
+        }
 
         const transaction = await Transaction.create({
             user_id,
@@ -236,6 +248,9 @@ export const getAdminStats = async (req, res) => {
 
         const dailyDepositSum = todayDeposits.reduce((sum, t) => sum + t.amount, 0);
         const monthlyDepositSum = monthlyDeposits.reduce((sum, t) => sum + t.amount, 0);
+
+        const pendingDeposits = await Transaction.count({ where: { status: 'pending', type: 'deposit' } });
+        const approvedDeposits = await Transaction.count({ where: { status: 'approved', type: 'deposit' } });
 
         return res.status(200).json({
             total_users: totalUsers,

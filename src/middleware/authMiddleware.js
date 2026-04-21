@@ -15,6 +15,7 @@ export const requireAuth = (req, res, next) => {
         if (!jwtSecret)
             throw new Error('JWT_SECRET not defined');
         const decoded = jwt.verify(token, jwtSecret);
+        
         req.user = decoded; // { user_id, is_admin }
         next();
     }

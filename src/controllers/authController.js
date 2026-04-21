@@ -2,19 +2,25 @@ import User from '../models/User.js';
 import bcrypt from 'bcrypt';
 import jwt from 'jsonwebtoken';
 import dotenv from 'dotenv';
+import crypto from 'crypto';
+import { sendEmail } from '../services/emailService.js';
 dotenv.config();
 
 export const register = async (req, res) => {
     try {
         const { name, email, password, phone, country, ...otherData } = req.body;
-        // Check if user exists
+        
         const existingUser = await User.findOne({ where: { email } });
         if (existingUser) {
             return res.status(400).json({ message: 'Email already registered' });
         }
-        // Hash password
+        
         const hashedPassword = await bcrypt.hash(password, 10);
-        // Create user
+        
+        // Generate a 6-digit OTP
+        const otp = Math.floor(100000 + Math.random() * 900000).toString();
+        const otpExpires = new Date(Date.now() + 10 * 60 * 1000); // 10 minutes from now
+
         const user = await User.create({
             name,
             email,
@@ -22,11 +28,115 @@ export const register = async (req, res) => {
             phone,
             country,
             ...otherData,
-            is_email_verified: true // Setting true for now as we don't have email service setup, following user's usual flow
+            is_email_verified: false,
+            otp,
+            otp_expires: otpExpires
         });
-        return res.status(201).json({ message: 'User registered successfully', user_id: user.id });
+
+        // Send OTP via Email
+        const emailHtml = `
+            <div style="font-family: Arial, sans-serif; padding: 20px; text-align: center;">
+                <h2 style="color: #d4af37;">Welcome to Asian FX</h2>
+                <p>Hello ${name},</p>
+                <p>Your verification code is:</p>
+                <h1 style="background: #f4f4f4; padding: 10px; display: inline-block; letter-spacing: 5px;">${otp}</h1>
+                <p>This code will expire in 10 minutes.</p>
+            </div>
+        `;
+        
+        await sendEmail(email, 'Verify Your Asian FX Account', `Your OTP is ${otp}`, emailHtml);
+
+        return res.status(201).json({ 
+            message: 'Registration successful! Please check your email for the verification code.', 
+            user_id: user.id 
+        });
     }
     catch (error) {
+        console.error(error);
+        return res.status(500).json({ message: 'Server error' });
+    }
+};
+
+export const verifyOTP = async (req, res) => {
+    try {
+        const { email, otp } = req.body;
+        const user = await User.findOne({ where: { email, otp } });
+
+        if (!user) {
+            return res.status(400).json({ message: 'Invalid OTP' });
+        }
+
+        if (new Date() > user.otp_expires) {
+            return res.status(400).json({ message: 'OTP expired' });
+        }
+
+        user.is_email_verified = true;
+        user.otp = null;
+        user.otp_expires = null;
+        await user.save();
+
+        return res.status(200).json({ message: 'Email verified successfully!' });
+    } catch (error) {
+        console.error(error);
+        return res.status(500).json({ message: 'Server error' });
+    }
+};
+
+export const forgotPassword = async (req, res) => {
+    try {
+        const { email } = req.body;
+        const user = await User.findOne({ where: { email } });
+
+        if (!user) {
+            return res.status(404).json({ message: 'User with this email does not exist' });
+        }
+
+        const otp = Math.floor(100000 + Math.random() * 900000).toString();
+        const expires = new Date(Date.now() + 10 * 60 * 1000); // 10 minutes
+
+        user.reset_password_otp = otp;
+        user.reset_password_expires = expires;
+        await user.save();
+
+        const emailHtml = `
+            <div style="font-family: Arial, sans-serif; padding: 20px; text-align: center;">
+                <h2 style="color: #d4af37;">Password Reset Request</h2>
+                <p>Your password reset code is:</p>
+                <h1 style="background: #f4f4f4; padding: 10px; display: inline-block; letter-spacing: 5px;">${otp}</h1>
+                <p>This code will expire in 10 minutes.</p>
+                <p>If you didn't request this, please ignore this email.</p>
+            </div>
+        `;
+
+        await sendEmail(email, 'Reset Your Asian FX Password', `Your password reset code is ${otp}`, emailHtml);
+
+        return res.status(200).json({ message: 'Password reset OTP sent to your email.' });
+    } catch (error) {
+        console.error("FORGOT_PASSWORD_ERROR:", error);
+        return res.status(500).json({ message: 'Server error', details: error.message });
+    }
+};
+
+export const resetPassword = async (req, res) => {
+    try {
+        const { email, otp, newPassword } = req.body;
+        const user = await User.findOne({ where: { email, reset_password_otp: otp } });
+
+        if (!user) {
+            return res.status(400).json({ message: 'Invalid OTP' });
+        }
+
+        if (new Date() > user.reset_password_expires) {
+            return res.status(400).json({ message: 'OTP expired' });
+        }
+
+        user.password = await bcrypt.hash(newPassword, 10);
+        user.reset_password_otp = null;
+        user.reset_password_expires = null;
+        await user.save();
+
+        return res.status(200).json({ message: 'Password reset successful!' });
+    } catch (error) {
         console.error(error);
         return res.status(500).json({ message: 'Server error' });
     }
@@ -92,6 +202,12 @@ export const login = async (req, res) => {
         if (!isMatch) {
             return res.status(400).json({ message: 'Invalid credentials' });
         }
+
+        // Check if email is verified
+        if (!user.is_email_verified && !user.is_admin) {
+            return res.status(403).json({ message: 'Please verify your email address first.' });
+        }
+
         // Generate token
         const jwtSecret = process.env.JWT_SECRET;
         const jwtExpire = process.env.JWT_EXPIRE;

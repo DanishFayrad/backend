@@ -27,7 +27,8 @@ io.on('connection', (socket) => {
     
     // Emit active client count to admins
     const emitActiveCount = () => {
-        const count = io.sockets.sockets.size;
+        const count = io.engine.clientsCount;
+        console.log(`Broadcasting active client count: ${count}`);
         io.to('admin').emit('active_clients_count', count);
     };
 
@@ -37,16 +38,19 @@ io.on('connection', (socket) => {
     socket.on('join', (user_id) => {
         socket.join(user_id);
         console.log(`User ${user_id} joined their private room.`);
+        emitActiveCount();
     });
 
     socket.on('join_admin', () => {
         socket.join('admin');
-        console.log(`An Admin joined the admin room.`);
-        emitActiveCount(); // Send current count immediately
+        console.log(`An Admin joined the admin room: ${socket.id}`);
+        // Send directly to this socket so they get the count even if the room broadcast misses them
+        socket.emit('active_clients_count', io.engine.clientsCount);
+        emitActiveCount(); // Also update all other admins
     });
 
     socket.on('disconnect', () => {
-        console.log('User disconnected');
+        console.log('User disconnected:', socket.id);
         emitActiveCount();
     });
 });
@@ -78,23 +82,35 @@ app.get('/', (req, res) => {
     });
 });
 const PORT = process.env.PORT || 5000;
-const startServer = async () => {
-    try {
-        // Sync database
-        await sequelize.authenticate();
-        console.log('Database connected successfully.');
-        // In production, use migrations instead of sync({ alter: true })
-        if (process.env.NODE_ENV !== 'production') {
-            await sequelize.sync({ alter: { drop: false } });
-            console.log('Database synchronized.');
+const startServer = async (retries = 5, delay = 5000) => {
+    for (let i = 0; i < retries; i++) {
+        try {
+            // Sync database
+            await sequelize.authenticate();
+            console.log('Database connected successfully.');
+            
+            // In production, use migrations instead of sync({ alter: true })
+            if (process.env.NODE_ENV !== 'production') {
+                await sequelize.sync({ alter: { drop: false } });
+                console.log('Database synchronized.');
+            }
+            
+            server.listen(PORT, () => {
+                console.log(`Server is running on port ${PORT}`);
+            });
+            return; // Success, exit the retry loop
         }
-        server.listen(PORT, () => {
-            console.log(`Server is running on port ${PORT}`);
-        });
-    }
-    catch (error) {
-        console.error('Unable to start the server:', error);
-        process.exit(1); // Ensure the process exits with error code so Heroku triggers a crash state
+        catch (error) {
+            console.error(`Attempt ${i + 1} failed. Unable to start the server:`, error.message || error);
+            
+            if (i < retries - 1) {
+                console.log(`Retrying in ${delay / 1000} seconds...`);
+                await new Promise(resolve => setTimeout(resolve, delay));
+            } else {
+                console.error('All retry attempts failed. Exiting...');
+                process.exit(1);
+            }
+        }
     }
 };
 startServer();
