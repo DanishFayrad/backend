@@ -65,6 +65,23 @@ const User = sequelize.define('User', {
     reset_password_expires: {
         type: DataTypes.DATE,
         allowNull: true
+    },
+    referral_code: {
+        type: DataTypes.STRING,
+        unique: true,
+        allowNull: true
+    },
+    referred_by: {
+        type: DataTypes.INTEGER,
+        allowNull: true,
+        references: {
+            model: 'users',
+            key: 'id'
+        }
+    },
+    affiliate_balance: {
+        type: DataTypes.FLOAT,
+        defaultValue: 0.0
     }
 }, {
     tableName: 'users',

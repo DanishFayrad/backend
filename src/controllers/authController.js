@@ -17,6 +17,18 @@ export const register = async (req, res) => {
         
         const hashedPassword = await bcrypt.hash(password, 10);
         
+        // Handle Referral
+        let referredBy = null;
+        if (req.body.referral_code) {
+            const referrer = await User.findOne({ where: { referral_code: req.body.referral_code } });
+            if (referrer) {
+                referredBy = referrer.id;
+            }
+        }
+
+        // Generate unique referral code for the new user
+        const newReferralCode = crypto.randomBytes(4).toString('hex').toUpperCase();
+
         // Generate a 6-digit OTP
         const otp = Math.floor(100000 + Math.random() * 900000).toString();
         const otpExpires = new Date(Date.now() + 10 * 60 * 1000); // 10 minutes from now
@@ -30,7 +42,9 @@ export const register = async (req, res) => {
             ...otherData,
             is_email_verified: false,
             otp,
-            otp_expires: otpExpires
+            otp_expires: otpExpires,
+            referral_code: newReferralCode,
+            referred_by: referredBy
         });
 
         // Send OTP via Email
@@ -256,6 +270,45 @@ export const getProfile = async (req, res) => {
             return res.status(404).json({ message: 'User not found' });
         }
         return res.status(200).json(user);
+    } catch (error) {
+        console.error(error);
+        return res.status(500).json({ message: 'Server error' });
+    }
+};
+
+export const resendOTP = async (req, res) => {
+    try {
+        const { email } = req.body;
+        const user = await User.findOne({ where: { email } });
+
+        if (!user) {
+            return res.status(404).json({ message: 'User not found' });
+        }
+
+        if (user.is_email_verified) {
+            return res.status(400).json({ message: 'Email is already verified' });
+        }
+
+        const otp = Math.floor(100000 + Math.random() * 900000).toString();
+        const expires = new Date(Date.now() + 10 * 60 * 1000); // 10 minutes
+
+        user.otp = otp;
+        user.otp_expires = expires;
+        await user.save();
+
+        const emailHtml = `
+            <div style="font-family: Arial, sans-serif; padding: 20px; text-align: center;">
+                <h2 style="color: #d4af37;">Verify Your Asian FX Account</h2>
+                <p>Hello ${user.name},</p>
+                <p>Your new verification code is:</p>
+                <h1 style="background: #f4f4f4; padding: 10px; display: inline-block; letter-spacing: 5px;">${otp}</h1>
+                <p>This code will expire in 10 minutes.</p>
+            </div>
+        `;
+
+        await sendEmail(email, 'Verify Your Asian FX Account', `Your OTP is ${otp}`, emailHtml);
+
+        return res.status(200).json({ message: 'New verification code sent to your email.' });
     } catch (error) {
         console.error(error);
         return res.status(500).json({ message: 'Server error' });

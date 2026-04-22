@@ -8,6 +8,7 @@ router.post('/login', authController.login);
 router.post('/logout', requireAuth, authController.logout);
 router.get('/profile', requireAuth, authController.getProfile);
 router.post('/forgot-password', authController.forgotPassword);
+router.post('/resend-otp', authController.resendOTP);
 router.post('/reset-password', authController.resetPassword);
 export default router;
 //# sourceMappingURL=authRoutes.js.map
