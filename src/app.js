@@ -22,35 +22,58 @@ app.use((req, res, next) => {
 });
 
 // Socket.io connection
+const userSessions = new Map(); // Track unique user IDs and their socket counts
+
 io.on('connection', (socket) => {
     console.log('A user connected:', socket.id);
     
-    // Emit active client count to admins
     const emitActiveCount = () => {
-        const count = io.engine.clientsCount;
-        console.log(`Broadcasting active client count: ${count}`);
+        // Count unique authenticated users + guest connections
+        const authenticatedCount = userSessions.size;
+        const totalSockets = io.engine.clientsCount;
+        
+        // We calculate 'active users' as unique logged-in users 
+        // plus any sockets that haven't 'joined' yet (guests)
+        // But to be most accurate to the user's request, we'll count unique users.
+        const guestSockets = Array.from(io.sockets.sockets.values()).filter(s => !s.user_id).length;
+        
+        const count = authenticatedCount + guestSockets;
+        console.log(`Broadcasting active client count: ${count} (Users: ${authenticatedCount}, Guests: ${guestSockets})`);
         io.to('admin').emit('active_clients_count', count);
     };
 
     emitActiveCount();
     
-    // Join a room based on user_id for private notifications
     socket.on('join', (user_id) => {
         socket.join(user_id);
-        console.log(`User ${user_id} joined their private room.`);
+        socket.user_id = user_id;
+        
+        // Track unique user session
+        if (!userSessions.has(user_id)) {
+            userSessions.set(user_id, new Set());
+        }
+        userSessions.get(user_id).add(socket.id);
+        
+        console.log(`User ${user_id} joined. Total unique users: ${userSessions.size}`);
         emitActiveCount();
     });
 
     socket.on('join_admin', () => {
         socket.join('admin');
         console.log(`An Admin joined the admin room: ${socket.id}`);
-        // Send directly to this socket so they get the count even if the room broadcast misses them
-        socket.emit('active_clients_count', io.engine.clientsCount);
-        emitActiveCount(); // Also update all other admins
+        emitActiveCount();
     });
 
     socket.on('disconnect', () => {
         console.log('User disconnected:', socket.id);
+        
+        if (socket.user_id && userSessions.has(socket.user_id)) {
+            userSessions.get(socket.user_id).delete(socket.id);
+            if (userSessions.get(socket.user_id).size === 0) {
+                userSessions.delete(socket.user_id);
+            }
+        }
+        
         emitActiveCount();
     });
 });

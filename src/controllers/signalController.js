@@ -1,4 +1,4 @@
-import { Signal, UserSignal, User, Notification, sequelize } from '../models/index.js';
+import { Signal, UserSignal, User, Notification, AppSetting, SignalRequest, sequelize } from '../models/index.js';
 import { Op } from 'sequelize';
 import { sendEmail } from '../services/emailService.js';
 import cloudinary from '../config/cloudinary.js';
@@ -6,52 +6,53 @@ export const getSignalsDashboard = async (req, res) => {
     try {
         const { symbol, limit = 20 } = req.query;
         const seventyTwoHoursAgo = new Date(Date.now() - 72 * 60 * 60 * 1000);
+
+        const currentUserId = req.user.is_admin ? null : parseInt(req.user.user_id);
+        let isApproved = false;
+
+        if (!req.user.is_admin) {
+            const signalApproval = await SignalRequest.findOne({
+                where: { user_id: currentUserId, status: 'approved' }
+            });
+            isApproved = !!signalApproval;
+        }
+
+        const privacyFilter = !req.user.is_admin ? (
+            isApproved ? {
+                [Op.or]: [
+                    { target_user_id: null },
+                    { target_user_id: currentUserId }
+                ]
+            } : {
+                target_user_id: currentUserId
+            }
+        ) : {};
+
         const where = { 
             status: 'active',
-            created_at: { [Op.gte]: seventyTwoHoursAgo }
+            created_at: { [Op.gte]: seventyTwoHoursAgo },
+            ...privacyFilter
         };
-
-        // Filter by user unless admin
-        if (!req.user.is_admin) {
-            const currentUserId = parseInt(req.user.user_id);
-            where[Op.and] = [
-                {
-                    [Op.or]: [
-                        { target_user_id: null },
-                        { target_user_id: currentUserId }
-                    ]
-                }
-            ];
-        }
 
         if (symbol) {
             where.symbol = { [Op.iLike]: `%${symbol}%` };
         }
+        
         const active_signals = await Signal.findAll({
             where,
             limit: parseInt(limit),
             order: [['created_at', 'DESC']]
         });
+
         const recent_signals = await Signal.findAll({
             limit: 10,
             order: [['created_at', 'DESC']]
         });
-        // Stats
-        const privacyFilter = !req.user.is_admin ? {
-            [Op.and]: [
-                {
-                    [Op.or]: [
-                        { target_user_id: null },
-                        { target_user_id: parseInt(req.user.user_id) }
-                    ]
-                }
-            ]
-        } : {};
 
+        // Stats
         const active_count = await Signal.count({ 
             where: { 
-                ...where,
-                ...privacyFilter
+                ...where
             } 
         });
 
@@ -342,6 +343,141 @@ export const extendTimer = async (req, res) => {
             message: `Timer extended by ${additional_minutes} minutes`,
             new_release_at: new_release
         });
+    } catch (error) {
+        console.error(error);
+        return res.status(500).json({ message: 'Server error' });
+    }
+};
+
+// Global Signal Timer Logic
+export const setGlobalTimer = async (req, res) => {
+    try {
+        const { minutes } = req.body;
+        const expires_at = new Date(Date.now() + parseInt(minutes) * 60 * 1000);
+
+        await AppSetting.upsert({ key: 'global_signal_timer', value: expires_at.toISOString() });
+        
+        // Clear previous requests for a fresh start
+        await SignalRequest.destroy({ where: {} });
+
+        if (req.io) {
+            req.io.emit('global_timer_update', { expires_at });
+        }
+
+        return res.status(200).json({ message: 'Global signal timer set', expires_at });
+    } catch (error) {
+        console.error(error);
+        return res.status(500).json({ message: 'Server error' });
+    }
+};
+
+export const getGlobalTimer = async (req, res) => {
+    try {
+        const setting = await AppSetting.findOne({ where: { key: 'global_signal_timer' } });
+        if (!setting || !setting.value) {
+            return res.status(200).json({ expires_at: null });
+        }
+        
+        const expires_at = new Date(setting.value);
+        if (expires_at < new Date()) {
+            return res.status(200).json({ expires_at: null });
+        }
+
+        // Check if current user has already requested access
+        let requestStatus = null;
+        if (req.user) {
+            const request = await SignalRequest.findOne({ where: { user_id: req.user.user_id } });
+            if (request) {
+                requestStatus = request.status;
+            }
+        }
+
+        return res.status(200).json({ expires_at, requestStatus });
+    } catch (error) {
+        console.error(error);
+        return res.status(500).json({ message: 'Server error' });
+    }
+};
+
+export const clearGlobalTimer = async (req, res) => {
+    try {
+        await AppSetting.destroy({ where: { key: 'global_signal_timer' } });
+        
+        if (req.io) {
+            req.io.emit('global_timer_update', { expires_at: null });
+        }
+
+        return res.status(200).json({ message: 'Global signal timer cleared' });
+    } catch (error) {
+        console.error(error);
+        return res.status(500).json({ message: 'Server error' });
+    }
+};
+
+// Signal Request Logic
+export const requestSignalAccess = async (req, res) => {
+    try {
+        const user_id = req.user.user_id;
+        const user = await User.findByPk(user_id);
+
+        const [request, created] = await SignalRequest.findOrCreate({
+            where: { user_id },
+            defaults: { status: 'pending' }
+        });
+
+        if (!created) {
+            return res.status(400).json({ message: 'Request already sent' });
+        }
+
+        if (req.io) {
+            req.io.to('admin').emit('admin_notification', {
+                type: 'SIGNAL_REQUEST',
+                user_id,
+                user_name: user.name
+            });
+        }
+
+        return res.status(201).json({ message: 'Signal access requested successfully', status: 'pending' });
+    } catch (error) {
+        console.error(error);
+        return res.status(500).json({ message: 'Server error' });
+    }
+};
+
+export const getSignalRequests = async (req, res) => {
+    try {
+        const requests = await SignalRequest.findAll({
+            include: [{ model: User, attributes: ['id', 'name', 'email', 'wallet_balance'] }],
+            order: [['created_at', 'DESC']]
+        });
+        return res.status(200).json(requests);
+    } catch (error) {
+        console.error(error);
+        return res.status(500).json({ message: 'Server error' });
+    }
+};
+
+export const approveSignalRequest = async (req, res) => {
+    try {
+        const { id } = req.params;
+        const request = await SignalRequest.findByPk(id);
+        
+        if (!request) {
+            return res.status(404).json({ message: 'Request not found' });
+        }
+
+        request.status = 'approved';
+        await request.save();
+
+        if (req.io) {
+            req.io.to(request.user_id).emit('notification', {
+                title: 'Signal Access Approved!',
+                message: 'You have been approved for the upcoming signal. Stay tuned!',
+                type: 'signal_approval'
+            });
+        }
+
+        return res.status(200).json({ message: 'Request approved successfully' });
     } catch (error) {
         console.error(error);
         return res.status(500).json({ message: 'Server error' });
