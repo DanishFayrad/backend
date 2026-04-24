@@ -11,6 +11,10 @@ import SignalRequest from './SignalRequest.js';
 User.hasMany(Transaction, { foreignKey: 'user_id', onDelete: 'CASCADE' });
 Transaction.belongsTo(User, { foreignKey: 'user_id' });
 
+// Referral Associations
+User.hasMany(User, { as: 'ReferredUsers', foreignKey: 'referred_by' });
+User.belongsTo(User, { as: 'Referrer', foreignKey: 'referred_by' });
+
 // User <-> Notification
 User.hasMany(Notification, { foreignKey: 'user_id' });
 Notification.belongsTo(User, { foreignKey: 'user_id' });

@@ -105,15 +105,6 @@ export const takeSignal = async (req, res) => {
         user.wallet_balance -= invested_amount;
         await user.save({ transaction: t });
 
-        // Affiliate Commission Logic
-        if (user.referred_by) {
-            const referrer = await User.findByPk(user.referred_by, { transaction: t });
-            if (referrer) {
-                referrer.affiliate_balance += 0.30;
-                await referrer.save({ transaction: t });
-                console.log(`Credited $0.30 affiliate commission to user ${referrer.id} for signal taken by user ${user.id}`);
-            }
-        }
         // Update signal stats
         signal.total_taken += 1;
         await signal.save({ transaction: t });

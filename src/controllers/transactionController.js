@@ -138,6 +138,19 @@ export const approveTransaction = async (req, res) => {
             user.wallet_balance += transaction.amount;
             user.is_active = true; // Activate user for signals
             await user.save({ transaction: t });
+
+            // Affiliate Commission Logic
+            if (user.referred_by) {
+                const referrer = await User.findByPk(user.referred_by, { transaction: t });
+                if (referrer) {
+                    const commission = transaction.amount * 0.30; // 30% commission
+                    referrer.affiliate_balance += commission;
+                    referrer.total_referral_deposits += transaction.amount;
+                    await referrer.save({ transaction: t });
+                    
+                    console.log(`Credited $${commission} affiliate commission to user ${referrer.id} for deposit of $${transaction.amount} by user ${user.id}`);
+                }
+            }
         }
 
         // Create Notification

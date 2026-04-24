@@ -8,7 +8,7 @@ dotenv.config();
 
 export const register = async (req, res) => {
     try {
-        const { name, email, password, phone, country, ...otherData } = req.body;
+        const { name, email, password, phone, country, referral_code, ...otherData } = req.body;
         
         const existingUser = await User.findOne({ where: { email } });
         if (existingUser) {
@@ -19,10 +19,16 @@ export const register = async (req, res) => {
         
         // Handle Referral
         let referredBy = null;
-        if (req.body.referral_code) {
-            const referrer = await User.findOne({ where: { referral_code: req.body.referral_code } });
+        if (referral_code) {
+            console.log(`Processing registration with referral code: ${referral_code}`);
+            const referrer = await User.findOne({ where: { referral_code: referral_code.trim().toUpperCase() } });
             if (referrer) {
                 referredBy = referrer.id;
+                referrer.referral_count += 1;
+                await referrer.save();
+                console.log(`Referral matched! Referrer ID: ${referrer.id}, Name: ${referrer.name}`);
+            } else {
+                console.log(`No referrer found for code: ${referral_code}`);
             }
         }
 
@@ -39,12 +45,12 @@ export const register = async (req, res) => {
             password: hashedPassword,
             phone,
             country,
-            ...otherData,
             is_email_verified: false,
             otp,
             otp_expires: otpExpires,
             referral_code: newReferralCode,
-            referred_by: referredBy
+            referred_by: referredBy,
+            is_admin: false // Ensure new registrations are NEVER admin by default
         });
 
         // Send OTP via Email

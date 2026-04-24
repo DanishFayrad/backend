@@ -82,6 +82,14 @@ const User = sequelize.define('User', {
     affiliate_balance: {
         type: DataTypes.FLOAT,
         defaultValue: 0.0
+    },
+    referral_count: {
+        type: DataTypes.INTEGER,
+        defaultValue: 0
+    },
+    total_referral_deposits: {
+        type: DataTypes.FLOAT,
+        defaultValue: 0.0
     }
 }, {
     tableName: 'users',
