@@ -47,33 +47,47 @@ export const getDashboard = async (req, res) => {
         });
         // 4. Profit/Loss overview (last 30 days)
         const profit_loss_overview = [];
-        const token = req.headers.authorization?.split(' ')[1];
-        const jwtSecret = process.env.JWT_SECRET;
-        if (token && jwtSecret) {
-            jwt.verify(token, jwtSecret);
-        }
+        
+        const thirtyDaysAgo = new Date();
+        thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 29);
+        thirtyDaysAgo.setHours(0, 0, 0, 0);
+        
+        const last30DaysTransactions = await Transaction.findAll({
+            where: {
+                user_id,
+                created_at: {
+                    [Op.gte]: thirtyDaysAgo
+                }
+            }
+        });
+
+        // Initialize array with 30 days of 0 profit/loss
         for (let i = 29; i >= 0; i--) {
             const date = new Date();
             date.setDate(date.getDate() - i);
             const dateStr = date.toISOString().split('T')[0];
-            const day_transactions = await Transaction.findAll({
-                where: {
-                    user_id,
-                    created_at: {
-                        [Op.and]: [
-                            { [Op.gte]: new Date(date.setHours(0, 0, 0, 0)) },
-                            { [Op.lte]: new Date(date.setHours(23, 59, 59, 999)) }
-                        ]
-                    }
-                }
-            });
-            const daily_profit = day_transactions.filter((t) => t.type === 'profit').reduce((sum, t) => sum + t.amount, 0);
-            const daily_loss = day_transactions.filter((t) => t.type === 'deduction').reduce((sum, t) => sum + t.amount, 0);
             profit_loss_overview.push({
                 date: dateStr,
-                profit: daily_profit,
-                loss: daily_loss
+                profit: 0,
+                loss: 0
             });
+        }
+
+        // Aggregate transactions into the overview
+        for (const t of last30DaysTransactions) {
+            if (!t.created_at) continue;
+            
+            const tDateStr = new Date(t.created_at).toISOString().split('T')[0];
+            const dayStat = profit_loss_overview.find(d => d.date === tDateStr);
+            
+            if (dayStat) {
+                const amount = Number(t.amount) || 0;
+                if (t.type === 'profit') {
+                    dayStat.profit += amount;
+                } else if (t.type === 'deduction') {
+                    dayStat.loss += amount;
+                }
+            }
         }
         const win_rate = total_trades > 0 ? (winning_trades / total_trades) * 100 : 0.0;
         const loss_rate = total_trades > 0 ? (losing_trades / total_trades) * 100 : 0.0;

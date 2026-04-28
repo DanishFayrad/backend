@@ -81,28 +81,32 @@ export const getSignalsDashboard = async (req, res) => {
 export const takeSignal = async (req, res) => {
     const t = await sequelize.transaction();
     try {
-        const { user_id, signal_id, taken_price, invested_amount } = req.body;
+        const { user_id, signal_id, taken_price } = req.body;
+        
+        // Enforce the requirement: Each signal costs $1.
+        const SIGNAL_COST = 1.0;
+
         const user = await User.findByPk(user_id, { transaction: t });
         const signal = await Signal.findByPk(signal_id, { transaction: t });
         if (!user || !signal) {
             await t.rollback();
             return res.status(404).json({ message: 'User or Signal not found' });
         }
-        if (user.wallet_balance < invested_amount) {
+        if (user.wallet_balance < SIGNAL_COST) {
             await t.rollback();
-            return res.status(400).json({ message: 'Insufficient balance' });
+            return res.status(400).json({ message: 'Insufficient balance. Each signal costs $1.' });
         }
         // Create UserSignal entry
         const userSignal = await UserSignal.create({
             user_id,
             signal_id,
             taken_price,
-            invested_amount,
+            invested_amount: SIGNAL_COST,
             result: 'pending',
             taken_at: new Date()
         }, { transaction: t });
         // Update user balance
-        user.wallet_balance -= invested_amount;
+        user.wallet_balance -= SIGNAL_COST;
         await user.save({ transaction: t });
 
         // Update signal stats
@@ -213,17 +217,21 @@ export const createSignal = async (req, res) => {
             usersToNotify = await User.findAll({ attributes: ['id', 'email', 'name', 'is_active'] });
         }
 
-        // Loop through users to notify them
-        for (const user of usersToNotify) {
-             // 1. Create DB Notification
-             await Notification.create({
-                 user_id: user.id,
-                 title: `New Signal: ${symbol} (${type.toUpperCase()})`,
-                 message: `A new ${signal_type} signal for ${symbol} is available. Entry: ${entry_price}, TP: ${target_price}, SL: ${stop_loss}.`,
-                 type: 'signal',
-                 link: '/dashboard'
-             });
+        // Bulk create notifications
+        const notificationsData = usersToNotify.map(user => ({
+             user_id: user.id,
+             title: `New Signal: ${symbol} (${type.toUpperCase()})`,
+             message: `A new ${signal_type} signal for ${symbol} is available. Entry: ${entry_price}, TP: ${target_price}, SL: ${stop_loss}.`,
+             type: 'signal',
+             link: '/dashboard'
+        }));
 
+        if (notificationsData.length > 0) {
+            await Notification.bulkCreate(notificationsData);
+        }
+
+        // Loop through users for sockets and emails (non-blocking DB)
+        for (const user of usersToNotify) {
              // 2. Emit Socket IO
              if (req.io) {
                  req.io.to(user.id).emit('notification', {
@@ -352,7 +360,7 @@ export const setGlobalTimer = async (req, res) => {
         await SignalRequest.destroy({ where: {} });
 
         if (req.io) {
-            req.io.emit('global_timer_update', { expires_at });
+            req.io.emit('global_timer_update', { expires_at, server_time: Date.now() });
         }
 
         return res.status(200).json({ message: 'Global signal timer set', expires_at });
@@ -383,7 +391,7 @@ export const getGlobalTimer = async (req, res) => {
             }
         }
 
-        return res.status(200).json({ expires_at, requestStatus });
+        return res.status(200).json({ expires_at, requestStatus, server_time: Date.now() });
     } catch (error) {
         console.error(error);
         return res.status(500).json({ message: 'Server error' });

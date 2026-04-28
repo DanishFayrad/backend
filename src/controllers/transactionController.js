@@ -11,6 +11,11 @@ export const requestDeposit = async (req, res) => {
 
         amount = parseFloat(amount) || 0;
 
+        if (amount < 5) {
+            console.error('DEPOSIT_ERROR: Amount less than 5');
+            return res.status(400).json({ message: 'Minimum deposit is $5.' });
+        }
+
         if (!req.file) {
             console.error('DEPOSIT_ERROR: No file uploaded');
             return res.status(400).json({ message: 'Proof of payment screenshot is required.' });
@@ -226,41 +231,38 @@ export const getAdminStats = async (req, res) => {
         const totalUsers = await User.count();
         const totalBalance = await User.sum('wallet_balance') || 0;
         
-        const deposits = await Transaction.findAll({ where: { status: 'approved', type: 'deposit' } });
-        const withdrawals = await Transaction.findAll({ where: { status: 'approved', type: 'withdrawal' } });
+        const totalDeposit = await Transaction.sum('amount', { where: { status: 'approved', type: 'deposit' } }) || 0;
+        const totalWithdrawal = await Transaction.sum('amount', { where: { status: 'approved', type: 'withdrawal' } }) || 0;
+        const depositCount = await Transaction.count({ where: { status: 'approved', type: 'deposit' } });
+        const withdrawalCount = await Transaction.count({ where: { status: 'approved', type: 'withdrawal' } });
 
-        const totalDeposit = deposits.reduce((sum, t) => sum + t.amount, 0);
-        const totalWithdrawal = withdrawals.reduce((sum, t) => sum + t.amount, 0);
         const totalProfit = totalDeposit - totalWithdrawal; // Basic calculation
 
         const today = new Date();
         today.setHours(0,0,0,0);
         const firstDayOfMonth = new Date(today.getFullYear(), today.getMonth(), 1);
 
-        const todayDeposits = await Transaction.findAll({ 
+        const dailyDepositSum = await Transaction.sum('amount', { 
             where: { 
                 status: 'approved', 
                 type: 'deposit',
                 created_at: { [Op.gte]: today }
             } 
-        });
+        }) || 0;
 
-        const monthlyDeposits = await Transaction.findAll({ 
+        const monthlyDepositSum = await Transaction.sum('amount', { 
             where: { 
                 status: 'approved', 
                 type: 'deposit',
                 created_at: { [Op.gte]: firstDayOfMonth }
             } 
-        });
+        }) || 0;
 
         const dailyRegistrationCount = await User.count({
             where: {
                 created_at: { [Op.gte]: today }
             }
         });
-
-        const dailyDepositSum = todayDeposits.reduce((sum, t) => sum + t.amount, 0);
-        const monthlyDepositSum = monthlyDeposits.reduce((sum, t) => sum + t.amount, 0);
 
         const pendingDeposits = await Transaction.count({ where: { status: 'pending', type: 'deposit' } });
         const approvedDeposits = await Transaction.count({ where: { status: 'approved', type: 'deposit' } });
@@ -276,8 +278,8 @@ export const getAdminStats = async (req, res) => {
             total_profit: totalProfit.toLocaleString(),
             pending_deposits: pendingDeposits,
             approved_deposits: approvedDeposits,
-            deposit_count: approvedDeposits,
-            withdrawal_count: withdrawals.length
+            deposit_count: depositCount,
+            withdrawal_count: withdrawalCount
         });
     } catch (error) {
         console.error(error);
@@ -290,19 +292,21 @@ export const getUserWalletStats = async (req, res) => {
         const user_id = req.user.user_id;
         const user = await User.findByPk(user_id);
         
-        const deposits = await Transaction.findAll({ where: { user_id, status: 'approved', type: 'deposit' } });
-        const withdrawals = await Transaction.findAll({ where: { user_id, status: 'approved', type: 'withdrawal' } });
+        const totalDeposit = await Transaction.sum('amount', { where: { user_id, status: 'approved', type: 'deposit' } }) || 0;
+        const totalWithdrawal = await Transaction.sum('amount', { where: { user_id, status: 'approved', type: 'withdrawal' } }) || 0;
+        const depositCount = await Transaction.count({ where: { user_id, status: 'approved', type: 'deposit' } });
+        const withdrawalCount = await Transaction.count({ where: { user_id, status: 'approved', type: 'withdrawal' } });
 
-        const totalDeposit = deposits.reduce((sum, t) => sum + t.amount, 0);
-        const totalWithdrawal = withdrawals.reduce((sum, t) => sum + t.amount, 0);
+        const totalSignalFees = await UserSignal.sum('invested_amount', { where: { user_id } }) || 0;
 
         return res.status(200).json({
             balance: user.wallet_balance,
             total_deposit: totalDeposit,
             total_withdrawal: totalWithdrawal,
-            deposit_count: deposits.length,
-            withdrawal_count: withdrawals.length,
-            total_profit: (user.wallet_balance + totalWithdrawal) - totalDeposit
+            deposit_count: depositCount,
+            withdrawal_count: withdrawalCount,
+            total_profit: (user.wallet_balance + totalWithdrawal) - totalDeposit,
+            total_signal_fees: totalSignalFees
         });
     } catch (error) {
         console.error(error);
